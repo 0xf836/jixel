@@ -3,6 +3,21 @@
 A tiny JPEG XL encoder in Rust, ported and reworked from
 [libjxl/libjxl-tiny](https://github.com/libjxl/libjxl-tiny).
 
+## Command-line encoder
+
+```sh
+cargo build --release -p jixel-cli
+cargo install --path cli
+jixel image.png image.jxl -q 90
+jixel photo.jpg photo.jxl              # reversible JPEG transcoding
+jixel image.png exact.jxl --lossless
+jixel --help
+```
+
+The CLI supports PNG/JPEG input, 8/16-bit grayscale and alpha, progressive
+encoding, color management, and encoder presets. See the [CLI guide](cli/README.md)
+for modes, metadata handling, advanced settings, and limitations.
+
 ## Example
 
 ```rust

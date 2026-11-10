@@ -1,0 +1,22 @@
+[package]
+name = "jixel-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+publish = false
+description = "Encode PNG and JPEG images to JPEG XL"
+license = "BSD-3-Clause OR Apache-2.0"
+
+[[bin]]
+name = "jixel"
+path = "src/main.rs"
+
+[dependencies]
+jixel = { path = ".." }
+clap = { version = "4.6", features = ["derive", "wrap_help"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
+zune-jpeg = "0.5.15"
+png = "0.18"
+moxcms = "0.9.1"
+tempfile = "3"
+same-file = "1"

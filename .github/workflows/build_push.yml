@@ -28,6 +28,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
+      - run: cargo check -p jixel-cli
       - run: rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu i686-unknown-linux-gnu powerpc-unknown-linux-gnu wasm32-unknown-unknown
       - run: cargo build --target aarch64-unknown-linux-gnu
       - run: cargo build --target i686-unknown-linux-gnu
@@ -44,6 +45,12 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --no-default-features --features "${{ matrix.features }}"
+      - if: matrix.features == ''
+        run: cargo test -p jixel-cli
+      - if: matrix.features == ''
+        run: cargo clippy -p jixel-cli --all-targets -- -D warnings
+      - if: matrix.features == ''
+        run: cargo build --release -p jixel-cli
 
   tests_x86:
     name: Tests
@@ -55,6 +62,16 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --no-default-features --features "${{ matrix.features }}"
+      - if: matrix.features == ''
+        run: sudo apt-get update && sudo apt-get install -y libjxl-tools
+      - if: matrix.features == ''
+        run: cargo test -p jixel-cli -- --include-ignored
+      - if: matrix.features == ''
+        run: cargo clippy -p jixel-cli --all-targets -- -D warnings
+      - if: matrix.features == ''
+        run: cargo fmt -p jixel-cli -- --check
+      - if: matrix.features == ''
+        run: cargo build --release -p jixel-cli
 
   clippy_x86:
     name: Clippy x86 Stable
