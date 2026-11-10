@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod args;
+mod batch;
 mod input;
 
 use args::Args;
@@ -16,8 +17,8 @@ use std::{
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-fn check_output(args: &Args) -> Result<()> {
-    let stdout = args.output == Path::new("-");
+fn check_output(args: &Args, output: &Path) -> Result<()> {
+    let stdout = output == Path::new("-");
     if stdout && io::stdout().is_terminal() {
         return Err(
             "refusing to write binary JXL to a terminal; specify a file or redirect stdout".into(),
@@ -26,7 +27,7 @@ fn check_output(args: &Args) -> Result<()> {
     let output_handle = if stdout {
         Some(same_file::Handle::stdout()?)
     } else {
-        match same_file::Handle::from_path(&args.output) {
+        match same_file::Handle::from_path(output) {
             Ok(handle) => Some(handle),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
@@ -43,21 +44,20 @@ fn check_output(args: &Args) -> Result<()> {
             return Err("input and output refer to the same file".into());
         }
     }
-    if !stdout && fs::symlink_metadata(&args.output).is_ok() && !args.force {
+    if !stdout && fs::symlink_metadata(output).is_ok() && !args.force {
         return Err("output already exists; use --force to replace it".into());
     }
     Ok(())
 }
 
-fn write_output(args: &Args, bytes: &[u8]) -> Result<()> {
-    check_output(args)?;
-    if args.output == Path::new("-") {
+fn write_output(args: &Args, output: &Path, bytes: &[u8]) -> Result<()> {
+    check_output(args, output)?;
+    if output == Path::new("-") {
         let mut stdout = io::stdout().lock();
         stdout.write_all(bytes)?;
         stdout.flush()?;
     } else {
-        let parent = args
-            .output
+        let parent = output
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
@@ -65,19 +65,25 @@ fn write_output(args: &Args, bytes: &[u8]) -> Result<()> {
         temp.write_all(bytes)?;
         temp.as_file().sync_all()?;
         if args.force {
-            temp.persist(&args.output)?;
+            temp.persist(output)?;
         } else {
-            temp.persist_noclobber(&args.output)?;
+            temp.persist_noclobber(output)?;
         }
     }
     Ok(())
 }
 
-fn run() -> Result<()> {
-    let matches = Args::command().get_matches();
-    let args = Args::from_arg_matches(&matches)?;
+fn run_file(
+    args: &Args,
+    matches: &clap::ArgMatches,
+    output: &Path,
+    threads: usize,
+    label: &Path,
+    batch: bool,
+) -> Result<bool> {
     let mut config = args.config()?;
-    check_output(&args)?;
+    config.num_threads = threads;
+    check_output(args, output)?;
     let mut bytes = Vec::new();
     if args.input == Path::new("-") {
         io::stdin().lock().read_to_end(&mut bytes)?;
@@ -90,9 +96,15 @@ fn run() -> Result<()> {
         return Err("--jpeg requires JPEG input".into());
     }
     let transcode = args.transcode(jpeg);
-    args.validate_mode(&matches, transcode)?;
+    args.validate_mode(matches, transcode)?;
+    if let Some(minimum) = args.min_long_edge {
+        let (width, height) = input::dimensions(&bytes)?;
+        if width.max(height) < minimum {
+            return Ok(false);
+        }
+    }
     let started = Instant::now();
-    let output = if transcode {
+    let encoded = if transcode {
         jixel::encode_jpeg_lossless_with_config(
             &bytes,
             &jixel::JpegTranscodeConfig::default()
@@ -101,17 +113,21 @@ fn run() -> Result<()> {
                 .with_jpeg_reconstruction(!args.no_jpeg_reconstruction),
         )?
     } else {
-        let mut image = input::Input::decode(&bytes, &args)?;
-        image.configure(&args, &mut config)?;
+        let mut image = input::Input::decode(&bytes, args)?;
+        image.configure(args, &mut config)?;
         image.encode(&config)?
     };
-    write_output(&args, &output)
-        .map_err(|error| format!("cannot write output '{}': {error}", args.output.display()))?;
+    if batch {
+        fs::create_dir_all(output.parent().unwrap_or(Path::new(".")))?;
+    }
+    write_output(args, output, &encoded)
+        .map_err(|error| format!("cannot write output '{}': {error}", output.display()))?;
     if !args.quiet {
         eprintln!(
-            "jixel: {} bytes -> {} bytes in {:.3}s ({})",
+            "jixel: {}: {} bytes -> {} bytes in {:.3}s ({})",
+            label.display(),
             bytes.len(),
-            output.len(),
+            encoded.len(),
             started.elapsed().as_secs_f64(),
             if transcode {
                 "JPEG transcode"
@@ -126,6 +142,25 @@ fn run() -> Result<()> {
             }
         );
     }
+    Ok(true)
+}
+
+fn run() -> Result<()> {
+    let matches = Args::command().get_matches();
+    let args = Args::from_arg_matches(&matches)?;
+    let threads = args.config()?.num_threads;
+    if args.input.is_dir() {
+        return batch::run(&args, &matches, threads);
+    }
+    if args.recursive || args.jobs.is_some() || args.min_long_edge.is_some() || args.name.is_some()
+    {
+        return Err(args::invalid("batch options require an input directory").into());
+    }
+    let output = args
+        .output
+        .as_deref()
+        .ok_or_else(|| args::invalid("an output file is required for a single input"))?;
+    run_file(&args, &matches, output, threads, &args.input, false)?;
     Ok(())
 }
 

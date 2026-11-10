@@ -19,10 +19,11 @@ jixel image.png preview.jxl --progressive --group-order center-first
 cat image.png | jixel - - -q 90 > image.jxl
 ```
 
-Both input and output are required. Formats are detected by content. PNG defaults
-to lossy distance 1; JPEG defaults to coefficient transcoding with original-byte
-reconstruction. `--jpeg` selects that mode explicitly. `--no-jpeg-reconstruction`
-omits reconstruction data while preserving the coefficients. Unsupported JPEGs
+For a single file, both input and output are required. Formats are detected by
+content. PNG defaults to lossy distance 1; JPEG defaults to coefficient
+transcoding with original-byte reconstruction. `--jpeg` selects that mode
+explicitly. `--no-jpeg-reconstruction` omits reconstruction data while preserving
+the coefficients. Unsupported JPEGs
 fail rather than falling back to pixel encoding.
 
 `-q/--quality` (0..100), `-d/--distance` (0.05..25), `--lossless`, and `--jpeg`
@@ -36,6 +37,61 @@ most N code values of error per color sample, while alpha stays exact.
 for denser output. `-j/--threads 0` (default) uses available cores. Explicit tool
 switches override the preset regardless of argument order; for example,
 `-s slow --no-patches --no-vector-layers` disables those preset tools.
+
+## Batch processing
+
+A directory input enables batch processing. Specify an output directory, or omit
+it to write JXL files beside their sources:
+
+```sh
+jixel photos encoded -q 90
+jixel photos -q 90
+jixel photos encoded --recursive --min-long-edge 1600 -q 90
+jixel photos encoded --name '{stem}-{ext}.jxl' -q 90
+jixel photos encoded --jobs 4 --threads 16 -q 90
+```
+
+Without `--recursive`, only immediate files are considered. Recursion preserves
+relative subdirectories; an output directory inside the input is excluded from
+the scan. Symbolic links are skipped. PNG and JPEG are detected by content,
+regardless of extension; other files are skipped. Inputs are collected before
+encoding starts. An empty or entirely skipped batch succeeds.
+
+`--min-long-edge N` skips images whose longest side is **less than N pixels**;
+equality passes. Dimensions come from headers without decoding pixels. The
+threshold does not resize images. The same quality, speed, and metadata options
+apply to every input, including the usual format-specific mode restrictions.
+JPEG still defaults to reversible transcoding, so select `-q` or `-d` explicitly
+when reducing JPEG quality is intended.
+
+`--name TEMPLATE` defaults to `{stem}.jxl`. Only `{stem}` (filename without its
+last extension) and `{ext}` (extension without its dot) are supported, preserving
+case and native filename bytes. Templates must be single filenames ending in
+`.jxl`, without path separators. For example, `{stem}-{ext}.jxl` distinguishes
+`photo.jpg` from `photo.png`. Colliding output names and outputs referring to
+any batch input are rejected before writing, including with `--force`. Name
+collisions follow the destination filesystem's case and Unicode equivalence
+rules. For new outputs, temporary name probes in existing destination ancestors
+are removed before encoding starts.
+
+Existing regular output files are skipped; `--force` atomically replaces them.
+Directories and other non-file objects at output paths are errors. File errors,
+including blocked output subdirectories, are reported while other inputs
+continue. The final summary counts successful, skipped, and failed items
+(including skipped non-images). Exit status is 0 for
+success, 1 for processing errors, and 2 for invalid arguments. `--quiet` hides
+success/skip messages and the summary, while errors remain visible. Batch options
+require directory input; batch output cannot be stdout.
+
+`--jobs N` limits concurrent images (default: up to four, capped by the CPU budget
+and input count). In batch mode, `-j/--threads N` is the **total encoder thread
+budget**, divided between workers, rather than a budget for each image. Zero
+uses available CPUs, as in single-file mode. More jobs overlap serial decoding,
+color preparation, and I/O with encoding, but increase memory use: each active
+image holds its own buffers and encoder state. The queue holds paths, not decoded
+images. Reduce `--jobs` for large images or limited memory. A fixed budget per
+worker can leave CPUs idle near the end of a batch; continuous full CPU use is
+not guaranteed.
 
 ## Formats, color, and metadata
 

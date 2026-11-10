@@ -35,6 +35,16 @@ pub fn is_jpeg(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8, 0xff])
 }
 
+pub fn dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
+    if is_jpeg(bytes) {
+        let decoder = image::codecs::jpeg::JpegDecoder::new(Cursor::new(bytes))?;
+        Ok(decoder.dimensions())
+    } else {
+        let reader = png::Decoder::new(Cursor::new(bytes)).read_info()?;
+        Ok((reader.info().width, reader.info().height))
+    }
+}
+
 fn decoded_buffer(len: usize) -> Result<Vec<u8>> {
     if image::Limits::default()
         .max_alloc

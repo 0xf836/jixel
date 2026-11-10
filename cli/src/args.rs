@@ -8,6 +8,8 @@ const EXAMPLES: &str = "EXAMPLES:
   jixel photo.jpg smaller.jxl -q 85 -s slow        # decode and encode pixels
   jixel image.png exact.jxl --lossless
   jixel image.png preview.jxl --progressive -d 1
+  jixel photos encoded --recursive -q 90
+  jixel photos --min-long-edge 1600 --jobs 4 -q 90
   cat image.png | jixel - - -q 90 > image.jxl
 
 JPEG input defaults to reversible transcoding. PNG defaults to lossy distance 1.
@@ -39,16 +41,29 @@ impl From<SpeedArg> for Speed {
     }
 }
 
-#[derive(Debug, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[command(name = "jixel", version, about = "Encode PNG and JPEG images to JPEG XL",
     long_about = "Encode PNG and JPEG images to JPEG XL.\n\nPNG supports grayscale, RGB and alpha at 8/16 bits, including palette and packed\ninputs. JPEG defaults to reversible coefficient transcoding; -q/-d or --lossless\nselect pixel encoding instead. SDR ICC input is converted to sRGB only in lossy\nmode. Lossless retains samples and ICC. Supported PQ/HLG PNG stays HDR.\n\nInput and encoded output are buffered in memory; this is not a streaming encoder.",
     after_help = EXAMPLES, max_term_width = 100, next_line_help = false,
     arg_required_else_help = true)]
 pub struct Args {
-    /// PNG or JPEG input; '-' reads stdin (buffered in memory)
+    /// PNG/JPEG file or input directory; '-' reads buffered stdin
     pub input: PathBuf,
-    /// JXL output; '-' writes binary stdout, never a terminal
-    pub output: PathBuf,
+    /// Output file/directory; omitted for a directory writes beside inputs
+    pub output: Option<PathBuf>,
+
+    /// Include subdirectories, preserving their structure
+    #[arg(long, help_heading = "Batch")]
+    pub recursive: bool,
+    /// Maximum concurrent images [default for directories: up to 4]
+    #[arg(long, value_parser = positive_usize, value_name = "N", help_heading = "Batch")]
+    pub jobs: Option<usize>,
+    /// Skip images whose longest side is less than N pixels
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..), value_name = "N", help_heading = "Batch")]
+    pub min_long_edge: Option<u32>,
+    /// Output filename using {stem} and {ext} [default: {stem}.jxl]
+    #[arg(long, value_name = "TEMPLATE", help_heading = "Batch")]
+    pub name: Option<String>,
 
     /// Lossy quality, 0..100 (100 is still lossy) [default: distance 1]
     #[arg(short = 'q', long, value_parser = quality, conflicts_with_all = ["distance", "lossless", "jpeg"], help_heading = "Quality & modes")]
@@ -75,7 +90,7 @@ pub struct Args {
         help_heading = "Performance"
     )]
     pub speed: SpeedArg,
-    /// Maximum worker threads; 0 uses available cores
+    /// Worker threads (total budget for directories); 0 uses available CPUs
     #[arg(short = 'j', long, default_value_t = 0, help_heading = "Performance")]
     #[arg(value_name = "N")]
     pub threads: usize,
@@ -295,13 +310,21 @@ pub struct Args {
     /// Atomically replace an existing output (never the input itself)
     #[arg(short = 'f', long, help_heading = "Output")]
     pub force: bool,
-    /// Suppress success statistics; errors are still printed
+    /// Suppress success/skip messages and batch summary; errors stay visible
     #[arg(long, help_heading = "Output")]
     pub quiet: bool,
 }
 
 pub fn invalid(message: impl Into<String>) -> clap::Error {
     Args::command().error(ErrorKind::ValueValidation, message.into())
+}
+
+fn positive_usize(value: &str) -> Result<usize, String> {
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|&n| n > 0)
+        .ok_or_else(|| "expected a positive integer".to_owned())
 }
 
 fn number(value: &str, min: f32, max: f32) -> Result<f32, String> {
@@ -485,6 +508,10 @@ impl Args {
                     "threads",
                     "force",
                     "quiet",
+                    "recursive",
+                    "jobs",
+                    "min_long_edge",
+                    "name",
                 ]
                 .contains(&name)
             {
